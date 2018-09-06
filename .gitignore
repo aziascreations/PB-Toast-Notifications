@@ -1,3 +1,4 @@
 *.xml
 Documentation/
 *.exe
+ps1-test/

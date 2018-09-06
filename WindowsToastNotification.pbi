@@ -1,4 +1,18 @@
-﻿
+﻿﻿; ╔═══════════════════════════════════════════════════════════════════╦════════╗
+; ║ Purebasic Utils - Windows Toast Notification                      ║ v0.0.0 ║
+; ╠═══════════════════════════════════════════════════════════════════╩════════╣
+; ║                                                                            ║
+; ║   [Add something here...]                                                  ║
+; ║                                                                            ║
+; ╟────────────────────────────────────────────────────────────────────────────╢
+; ║ Requirements: PB v5.62+ (Not tested on previous versions)                  ║
+; ║               Windows 8+ (Preferably W10)                                  ║
+; ╟────────────────────────────────────────────────────────────────────────────╢
+; ║ Documentation: NOT FINISHED !!!                                            ║
+; ╚════════════════════════════════════════════════════════════════════════════╝
+
+;EnableExplicit
+
 ;ms-winsoundevent:Notification[.Looping].[Mail/...]
 ;https://docs.microsoft.com/en-us/windows/uwp/design/shell/tiles-and-notifications/adaptive-interactive-toasts
 
@@ -69,7 +83,7 @@ EnumerationBinary ToastComponentTypes ; The name is good enough...
 	#TOAST_COMPONENT_TYPE_PROGRESS_BAR
 EndEnumeration
 
-EnumerationBinary ToastComponentFlags
+EnumerationBinary ToastFlags
 	;#TOAST_IMAGE_PLACEMENT_HERO   ; = "hero"
 	;#TOAST_IMAGE_PLACEMENT_LOGO   ; = "appLogoOverride"
 	;#TOAST_IMAGE_PLACEMENT_INLINE ; = "_INLINE"
@@ -90,14 +104,29 @@ EnumerationBinary ToastComponentFlags
 	#TOAST_DURATION_LONG  ; = "long"
 	
 	#TOAST_SOUND_NORMAL
+	#TOAST_SOUND_CUSTOM ; ms-winsoundevent:Notification[.Looping].[Mail/...] won't be added to given path or somthing like that
 	#TOAST_SOUND_MUTED
 	#TOAST_SOUND_LOOP
+	
+	; PS1 Related flags
+	#TOAST_DEFAULT
+	
+	#TOAST_VISIBLE ; Default
+	#TOAST_HIDDEN ; Will only be shown in the action center (ONLY ON W10+, can cause errors on W8 because microsoft...)
+	
+	#TOAST_MIRRORING_ALLOWED ; Default
+	#TOAST_MIRRORING_DISABLED
+	
+	#TOAST_PRIORITY_NORMAL ; Default
+	#TOAST_PRIORITY_HIGH
 EndEnumeration
 
 ; Used for easy detection of changed param
 #TOAST_MASK_TEXT_PLACEMENT = #TOAST_TEXT_PLACEMENT_DEFAULT | #TOAST_TEXT_PLACEMENT_ATTRIBUTION
 #TOAST_MASK_TEXT_STYLE     = #TOAST_TEXT_STYLE_DEFAULT | #TOAST_TEXT_STYLE_BASE | #TOAST_TEXT_STYLE_CAPTION_SUBTLE
 #TOAST_MASK_TEXT_ALIGN     = #TOAST_TEXT_ALIGN_DEFAULT | #TOAST_TEXT_ALIGN_RIGHT
+
+;#TOAST_GHOST = #TOAST_HIDDEN
 
 Structure ToastTextComponentData
 	Content$
@@ -132,6 +161,7 @@ EndStructure
 
 Structure ToastNotification
 	AppID$
+	Flags.i
 	Timestamp.l
 	
 	List *CoreComponents.ToastComponent()
@@ -148,35 +178,14 @@ EndStructure
 
 
 
-Procedure.s GenerateUUID4()
-	Define.b i
-	Define.s UUID
-	Dim _UUID4Bytes.b(16)
-	
-	For i=0 To 16-1
-		_UUID4Bytes(i)=Random(255)
-	Next
-	_UUID4Bytes(6)=64+Random(15)
-	_UUID4Bytes(8)=128+Random(63)
-	
-	For i=0 To 16-1
-		If i=4 Or i=6 Or i=8 Or i=10
-			UUID.s+"-"
-		EndIf
-		UUID.s+RSet(Hex(_UUID4Bytes(i)&$FF),2,"0")
-	Next
-	
-	FreeArray(_UUID4Bytes())
-	ProcedureReturn UUID.s
-EndProcedure
-
-Procedure.i CreateToast(AppID$ = "Microsoft App")
+Procedure.i CreateToast(AppID$ = "Microsoft App", ToastFlags.i = #TOAST_DEFAULT)
 	Protected *Toast.ToastNotification = AllocateMemory(SizeOf(ToastNotification))
 	
 	If *Toast
 		InitializeStructure(*Toast, ToastNotification)
 		
 		*Toast\AppID$ = AppID$
+		*Toast\Flags = ToastFlags
 	EndIf
 	
 	ProcedureReturn *Toast
@@ -310,6 +319,11 @@ Procedure.b InsertToastCoreComponent(*Toast.ToastNotification, *Component.ToastC
 EndProcedure
 
 
+; Read
+Procedure.l GetToastComponentFlags(*Component.ToastComponent)
+	;If 
+EndProcedure
+
 ; Overwrite
 Procedure.b SetToastComponentFlags(*Component.ToastComponent, ComponentFlags.l = 0)
 	
@@ -320,14 +334,19 @@ Procedure.b UpdateToastComponentFlags(*Component.ToastComponent, ComponentFlags.
 	
 EndProcedure
 
+; is compaptible
 
-
+; Not explicit compliant
 Procedure.s GenerateToastXML(*Toast.ToastNotification)
 	Protected XML$, XMLID = CreateXML(#PB_Any, #PB_UTF8)
 	
 	If XMLID
 		; Creating the basic things
 		NodeToast = CreateXMLNode(RootXMLNode(XMLID), "toast")
+		;If *Toast\Flags & #TOAST_GHOST
+		;	SetXMLAttribute(NodeToast, "", "true")
+		;EndIf
+		
 		
 		If ListSize(*Toast\CoreComponents()) Or ListSize(*Toast\Groups())
 			NodeVisuals = CreateXMLNode(NodeToast, "visual")
@@ -335,6 +354,7 @@ Procedure.s GenerateToastXML(*Toast.ToastNotification)
 		
 		;If ListSize actions ...
 		
+		; if all good only
 		FormatXML(XMLID, #PB_XML_WindowsNewline | #PB_XML_ReduceNewline | #PB_XML_ReIndent | #PB_XML_ReFormat)
 		XML$ = ComposeXML(XMLID, #PB_XML_NoDeclaration)
 		FreeXML(XMLID)
@@ -342,6 +362,44 @@ Procedure.s GenerateToastXML(*Toast.ToastNotification)
 	
 	ProcedureReturn XML$
 EndProcedure
+
+Procedure.s GenerateToastPS1(*Toast.ToastNotification)
+	Protected Script$, Xml$ = GenerateToastXML(*Toast)
+	
+	If Xml$ <> #Null$
+		Script$ + "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null" + #CRLF$ +
+		          "[Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null" + #CRLF$ +
+		          "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null" + #CRLF$ + #CRLF$
+		
+		Script$ + "$APP_ID = '" + *Toast\AppID$ + "'" + #CRLF$ + #CRLF$
+		Script$ + "$toastXML = @" + Chr(34) + #CRLF$
+		Script$ + Xml$ + #CRLF$
+		Script$ + Chr(34) + "@"
+		
+		Script$ + "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument" + #CRLF$
+		Script$ + "$xml.LoadXml($template)" + #CRLF$
+		Script$ + "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml" + #CRLF$
+		
+		; if ghost
+		;W10+ ONLY !!!
+		;Script$ + "$toast.SuppressPopup = $TRUE;" + #CRLF$
+		
+		; if no mirroring
+		;Script$ + "$toast.NotificationMirroring = [Windows.UI.Notifications.NotificationMirroring]::Disabled" + #CRLF$
+		
+		; if high priority
+		; Requires creator update(use VM for that) !
+		;Script$ + "$toast.Priority = [Windows.UI.Notifications.ToastNotificationPriority]::High" + #CRLF$
+		
+		;Group & Tag seem useless
+		
+		Script$ + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($APP_ID).Show($toast)"
+	EndIf
+	
+	ProcedureReturn Script$
+EndProcedure
+
+
 
 
 
@@ -384,30 +442,6 @@ CompilerEndIf
 ; End
 
 
-; Procedure.s GenerateToastXML(*Toast.ToastNotification)
-; 	Declare *XML
-; 	
-; 	If CreateXML(0, #PB_UTF8)
-; 		
-; 		ExportXML(0, *Address, Size [, Flags])
-; 		
-; 		
-; 		*XML = AllocateMemory(ExportXMLSize(0))
-; 		
-; 		If ExportXML(0, *XML, MemorySize(*XML))
-; 			
-; 		Else
-; 			
-; 		EndIf
-; 		
-; 		;FormatXML(#XML, Flags [, IndentStep]) ;?
-; 		
-; 		FreeXML(0)
-; 	EndIf
-; 	
-; 	ProcedureReturn *XML\s
-; EndProcedure
-
 ; *Test.ToastContentGroup = CreateToastGroup()
 ; 
 ; *Sub1.ToastContentSubgroup = CreateToastSubgroup()
@@ -426,30 +460,11 @@ CompilerEndIf
 ;*Sub3.ToastContentSubgroup
 
 
-; 
-; 
-; 
-; 
-; ;
-; 
-; 
+
 ; Global WorkingDirectory$ = GetTemporaryDirectory() + "OcelusSoft\notifications-util\"
 ; 
-; Procedure Toast(Title$, Message$, Icon$, Audio$, Duration$="short", AppId$="OcelusWeatherNotifier")
-; 	Args$ = "--app-id " + Chr(34) + AppId$ + Chr(34)
-; 	Args$ = Args$ + " --title " + Chr(34) + Title$ + Chr(34)
-; 	Args$ = Args$ + " --message " + Chr(34) + Message$ +  Chr(34)
-; 	Args$ = Args$ + " --icon " + Chr(34) + Icon$ + Chr(34)
-; 	Args$ = Args$ + " --audio " + Chr(34) + Audio$ + Chr(34)
-; 	Args$ = Args$ + " --duration " + Chr(34) + Duration$ + Chr(34)
-; 	
-; 	Debug Args$
-; 	
-; 	RunProgram(WorkingDirectory$+"toast64-old.exe", Args$, "D:\Developement\Purebasic\notifications\", #PB_Program_Hide)
-; EndProcedure
-; 
-; ;Toast("Test", "a&nbsp;b", "D:\BAK2\Pictures\Icons\W10\pngs\imageres.dll\imageres_14.png", "silent", "short", "CharToastTest")
-; 
+
+; test01:
 ; 
 ; Template$ = ""
 ; 
@@ -477,32 +492,19 @@ CompilerEndIf
 ; 	
 ; 	RunProgram("PowerShell", "-ExecutionPolicy Bypass -File "+OutFilename$, WorkingDirectory$, #PB_Program_Wait | #PB_Program_Hide)
 ; 	
+; PowerShell -ExecutionPolicy Bypass
+
 ; 	DeleteFile(OutFilename$)
 ; Else
 ; 	MessageRequester("Information","Couldn't create the file!")
 ; 	End
 ; EndIf
-; 
-; 
-; 
-; ; 
-; ; Procedure.s ExportToPowerShellScriptString(*Toast.ToastNotification)
-; ; 	
-; ; EndProcedure
-; ; 
-; ; Procedure.s ExportToPowerShellScriptFile(*Toast.ToastNotification)
-; ; 	
-; ; EndProcedure
-; ; 
-; ; Procedure ExecuteToast(*Toast.ToastNotification)
-; ; 	;RunProgram()
-; ; EndProcedure
+
+
 
 ; IDE Options = PureBasic 5.62 (Windows - x64)
-; CursorPosition = 353
-; FirstLine = 262
-; Folding = 9f+
+; Folding = +--
 ; EnableXP
 ; CompileSourceDirectory
-; EnableCompileCount = 83
+; EnableCompileCount = 86
 ; EnableBuildCount = 0
